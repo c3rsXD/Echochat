@@ -1,0 +1,24 @@
+{
+  "name": "echochat2",
+  "version": "1.0.0",
+  "description": "EchoChat 2 - Secure Chat App using AES encryption",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "Your Name",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "bcryptjs": "^3.0.3",
+    "connect-mongo": "^5.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-session": "^1.17.3",
+    "mongoose": "^8.19.2",
+    "multer": "^2.0.2",
+    "socket.io": "^4.8.1"
+  },
+  "keywords": []
+}

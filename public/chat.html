@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EchoChat</title>
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: "Poppins", sans-serif;
+      background-color: #f4f4f4;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+
+    .chat-container {
+      display: flex;
+      width: 900px;
+      height: 600px;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+    }
+
+    .sidebar {
+      width: 30%;
+      background-color: #075e54;
+      color: white;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header {
+      padding: 20px;
+      font-weight: bold;
+      font-size: 1.2rem;
+      border-bottom: 1px solid rgba(255,255,255,0.3);
+    }
+
+    .user-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .user-item {
+      padding: 15px 20px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .user-item:hover,
+    .user-item.active {
+      background-color: #128c7e;
+    }
+
+    .badge {
+      background: red;
+      color: white;
+      border-radius: 50%;
+      padding: 2px 7px;
+      font-size: 0.8rem;
+      display: none;
+    }
+
+    .chat-area {
+      width: 70%;
+      display: flex;
+      flex-direction: column;
+      background-color: #ece5dd;
+    }
+
+    .chat-header {
+      background-color: #075e54;
+      color: white;
+      padding: 15px 20px;
+      font-weight: bold;
+      font-size: 1.1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logout-btn {
+      background: #ff5252;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .logout-btn:hover {
+      background: #ff3333;
+    }
+
+    .chat-messages {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: #ece5dd;
+    }
+
+    .message {
+      display: inline-block;
+      padding: 10px 15px;
+      border-radius: 10px;
+      margin-bottom: 10px;
+      max-width: 70%;
+      position: relative;
+      word-wrap: break-word;
+    }
+
+    .sent {
+      background-color: #dcf8c6;
+      align-self: flex-end;
+      border-bottom-right-radius: 0;
+      text-align: right;
+    }
+
+    .received {
+      background-color: #fff;
+      align-self: flex-start;
+      border-bottom-left-radius: 0;
+      text-align: left;
+    }
+
+    .meta {
+      font-size: 0.75rem;
+      color: #666;
+      margin-top: 6px;
+    }
+
+    .chat-input {
+      display: flex;
+      padding: 15px;
+      background-color: #f0f0f0;
+      border-top: 1px solid #ddd;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .chat-input input[type="text"] {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 20px;
+      outline: none;
+      font-size: 1rem;
+    }
+
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background-color: #075e54;
+      color: white;
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 18px;
+    }
+
+    .icon-btn:hover { background-color: #0b7c66; }
+
+    .file-thumb {
+      max-width: 220px;
+      max-height: 180px;
+      display: block;
+      border-radius: 8px;
+      margin-top: 6px;
+    }
+
+    .file-link {
+      display: inline-block;
+      padding: 6px 10px;
+      background: #f7f7f7;
+      border-radius: 6px;
+      color: #075e54;
+      text-decoration: none;
+      margin-top: 6px;
+    }
+  </style>
+</head>
+
+<body>
+<div class="chat-container">
+
+  <div class="sidebar">
+    <div class="sidebar-header">EchoChat</div>
+    <div class="user-list" id="userList"></div>
+  </div>
+
+  <div class="chat-area">
+    <div class="chat-header">
+      <span id="chatHeader">Select a user to start chatting</span>
+      <button class="logout-btn" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="chat-messages" id="chatMessages"></div>
+
+    <form id="chatForm" class="chat-input">
+      <!-- file picker (hidden) -->
+      <input type="file" id="fileInput" style="display:none" />
+      <!-- upload icon button -->
+      <button type="button" class="icon-btn" id="uploadBtn" title="Send file">📎</button>
+
+      <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off" />
+      <button type="submit" class="icon-btn" title="Send message">➤</button>
+    </form>
+  </div>
+
+</div>
+
+<script>
+  const socket = io();
+  let currentUser = null;
+  let currentChatUser = null;
+  const unreadCounts = {};
+
+  // DOM refs
+  const fileInput = document.getElementById('fileInput');
+  const uploadBtn = document.getElementById('uploadBtn');
+  const chatMessagesEl = document.getElementById('chatMessages');
+
+  async function fetchCurrentUser() {
+    const res = await fetch("/api/me", { credentials: 'same-origin' });
+    const data = await res.json();
+    currentUser = data.username;
+    socket.emit("join", currentUser);
+  }
+
+  async function loadUsers() {
+    const res = await fetch("/api/users", { credentials: 'same-origin' });
+    const users = await res.json();
+
+    const list = document.getElementById("userList");
+    list.innerHTML = "";
+
+    users.forEach((u) => {
+      const item = document.createElement("div");
+      item.className = "user-item";
+      item.dataset.username = u.username;
+
+      item.innerHTML = `
+        <span>${u.username}</span>
+        <span class="badge">0</span>
+      `;
+
+      item.onclick = () => selectUser(u.username, item);
+      list.appendChild(item);
+    });
+  }
+
+  async function selectUser(username, element) {
+    currentChatUser = username;
+
+    document.querySelectorAll(".user-item").forEach((el) =>
+      el.classList.remove("active")
+    );
+    element.classList.add("active");
+
+    document.getElementById("chatHeader").textContent = username;
+
+    // reset unread count
+    unreadCounts[username] = 0;
+    updateBadge(username);
+
+    // fetch conversation
+    const res = await fetch(`/api/messages/${username}`, { credentials: 'same-origin' });
+    const msgs = await res.json();
+
+    const container = document.getElementById("chatMessages");
+    container.innerHTML = "";
+
+    msgs.forEach((m) => {
+      if (m.isFile) {
+        // file message
+        const type = m.sender === currentUser ? 'sent' : 'received';
+        appendMessage(type, m, m.sender, m.timestamp);
+      } else {
+        const type = m.sender === currentUser ? 'sent' : 'received';
+        appendMessage(type, m.text, m.sender, m.timestamp);
+      }
+    });
+  }
+
+  // Append either text or file message
+  // If 'textOrFile' is an object with isFile true, it is a file message (object shape from server)
+  function appendMessage(type, textOrFile, sender, timestamp) {
+    const msgDiv = document.createElement("div");
+    msgDiv.className = `message ${type}`;
+
+    const senderLabel = sender === currentUser ? "You" : sender;
+    const time = timestamp ? formatTime(timestamp) : formatTime(new Date());
+
+    let inner = '';
+
+    if (textOrFile && typeof textOrFile === 'object' && textOrFile.isFile) {
+      // file message object
+      const file = textOrFile;
+      if (file.mimeType && file.mimeType.startsWith('image/')) {
+        // show inline image (served decrypted via /files/:storedFileName)
+        inner += `<div><img class="file-thumb" src="/files/${encodeURIComponent(file.storedFileName)}" alt="${escapeHtml(file.originalName)}" /></div>`;
+        inner += `<div class="meta">${senderLabel} • ${time}</div>`;
+      } else {
+        // non-image: show link to download
+        inner += `<div><a class="file-link" href="/files/${encodeURIComponent(file.storedFileName)}" target="_blank" rel="noopener noreferrer">${escapeHtml(file.originalName)}</a></div>`;
+        inner += `<div class="meta">${senderLabel} • ${time}</div>`;
+      }
+    } else {
+      // text message
+      const safeText = escapeHtml(String(textOrFile || ''));
+      inner += `<div>${safeText}</div>`;
+      inner += `<div class="meta">${senderLabel} • ${time}</div>`;
+    }
+
+    msgDiv.innerHTML = inner;
+    chatMessagesEl.appendChild(msgDiv);
+    msgDiv.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function formatTime(ts) {
+    const date = new Date(ts);
+    return date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  // simple HTML escape for display safety
+  function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, (m) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[m]));
+  }
+
+  // Text send
+  document.getElementById("chatForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    const input = document.getElementById("messageInput");
+    const text = input.value.trim();
+
+    if (!text || !currentChatUser)
+      return alert("Select a user first!");
+
+    socket.emit("sendMessage", { to: currentChatUser, text });
+    appendMessage("sent", text, currentUser, new Date());
+
+    input.value = "";
+  });
+
+  // Upload button opens file picker
+  uploadBtn.addEventListener('click', () => {
+    if (!currentChatUser) return alert('Select a user first!');
+    fileInput.click();
+  });
+
+  // When file selected => upload to server
+  fileInput.addEventListener('change', async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    if (!currentChatUser) return alert('Select a user first!');
+
+    const form = new FormData();
+    form.append('file', file);
+    form.append('to', currentChatUser);
+
+    try {
+      // upload using same-origin credentials so session cookie is included
+      const res = await fetch('/upload', {
+        method: 'POST',
+        body: form,
+        credentials: 'same-origin'
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        console.error('Upload failed', data);
+        alert('Upload failed');
+        return;
+      }
+
+      // server returns payload with storedFileName etc
+      const payload = data.payload || data;
+      // show uploaded file in sender chat immediately
+      appendMessage('sent', payload, currentUser, new Date());
+
+      // Clear file input
+      fileInput.value = '';
+    } catch (err) {
+      console.error('Upload error', err);
+      alert('Upload failed');
+    }
+  });
+
+  // Socket: new text message
+  socket.on("newMessage", (msg) => {
+    if (msg.sender === currentUser) return; // already appended for sender
+
+    if (msg.sender === currentChatUser && msg.receiver === currentUser) {
+      appendMessage("received", msg.text, msg.sender, msg.timestamp);
+    } else {
+      // increment unread
+      unreadCounts[msg.sender] = (unreadCounts[msg.sender] || 0) + 1;
+      updateBadge(msg.sender);
+    }
+  });
+
+  // Socket: file message broadcast
+  socket.on("fileMessage", (msg) => {
+    // msg: { sender, receiver, isFile:true, originalName, mimeType, storedFileName, timestamp }
+    // show if relevant
+    if (msg.sender === currentUser) return; // sender already showed via upload response
+
+    if ( (msg.sender === currentChatUser && msg.receiver === currentUser) ||
+         (msg.receiver === currentChatUser && msg.sender === currentUser) ) {
+      // If conversation open and message belongs here, display
+      if (msg.sender === currentChatUser && msg.receiver === currentUser) {
+        appendMessage('received', msg, msg.sender, msg.timestamp);
+      } else if (msg.sender === currentUser && msg.receiver === currentChatUser) {
+        appendMessage('sent', msg, msg.sender, msg.timestamp);
+      }
+    } else {
+      // increment unread for sender
+      unreadCounts[msg.sender] = (unreadCounts[msg.sender] || 0) + 1;
+      updateBadge(msg.sender);
+    }
+  });
+
+  function updateBadge(username) {
+    const badge = document.querySelector(
+      `.user-item[data-username='${username}'] .badge`
+    );
+    if (!badge) return;
+
+    const count = unreadCounts[username] || 0;
+
+    if (count > 0) {
+      badge.style.display = "inline-block";
+      badge.textContent = count > 9 ? "9+" : count;
+    } else {
+      badge.style.display = "none";
+    }
+  }
+
+  function logout() {
+    window.location.href = "/logout";
+  }
+
+  // initialize
+  fetchCurrentUser().then(loadUsers).catch((e) => {
+    console.error('Init error', e);
+    // if not authenticated the backend redirect will handle it
+  });
+
+</script>
+</body>
+</html>

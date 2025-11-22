@@ -100,6 +100,21 @@
       background: #ff3333;
     }
 
+    /* NEW: Error Banner Style */
+    .error-banner {
+      padding: 10px;
+      background-color: #ffdddd;
+      color: #d8000c;
+      text-align: center;
+      border-radius: 0; 
+      display: none; /* Hidden by default */
+      position: absolute;
+      top: 55px; /* Below chat-header */
+      width: 100%;
+      box-sizing: border-box;
+      z-index: 10;
+    }
+
     .chat-messages {
       flex: 1;
       padding: 20px;
@@ -202,11 +217,14 @@
     <div class="user-list" id="userList"></div>
   </div>
 
-  <div class="chat-area">
+  <div class="chat-area" style="position: relative;">
     <div class="chat-header">
       <span id="chatHeader">Select a user to start chatting</span>
       <button class="logout-btn" onclick="logout()">Logout</button>
     </div>
+    
+    <!-- NEW: Error Banner element -->
+    <div id="errorBanner" class="error-banner"></div>
 
     <div class="chat-messages" id="chatMessages"></div>
 
@@ -233,6 +251,23 @@
   const fileInput = document.getElementById('fileInput');
   const uploadBtn = document.getElementById('uploadBtn');
   const chatMessagesEl = document.getElementById('chatMessages');
+  const errorBannerEl = document.getElementById('errorBanner'); // NEW REF
+
+  // NEW: Function to display status messages
+  function displayStatus(message, isError = true) {
+      errorBannerEl.textContent = message;
+      errorBannerEl.style.display = 'block';
+      
+      // Set background color based on status
+      errorBannerEl.style.backgroundColor = isError ? '#ffdddd' : '#ddffdd';
+      errorBannerEl.style.color = isError ? '#d8000c' : '#00a000';
+      
+      // Auto-hide after 5 seconds
+      setTimeout(() => {
+          errorBannerEl.style.display = 'none';
+      }, 5000);
+  }
+
 
   async function fetchCurrentUser() {
     const res = await fetch("/api/me", { credentials: 'same-origin' });
@@ -285,12 +320,13 @@
     container.innerHTML = "";
 
     msgs.forEach((m) => {
+      // Logic for displaying messages from history (m.isFile is checked here)
       if (m.isFile) {
-        // file message
         const type = m.sender === currentUser ? 'sent' : 'received';
         appendMessage(type, m, m.sender, m.timestamp);
       } else {
         const type = m.sender === currentUser ? 'sent' : 'received';
+        // Note: m.text here is already decrypted by the server
         appendMessage(type, m.text, m.sender, m.timestamp);
       }
     });
@@ -308,19 +344,19 @@
     let inner = '';
 
     if (textOrFile && typeof textOrFile === 'object' && textOrFile.isFile) {
-      // file message object
+      // === FILE MESSAGE LOGIC ===
       const file = textOrFile;
       if (file.mimeType && file.mimeType.startsWith('image/')) {
         // show inline image (served decrypted via /files/:storedFileName)
         inner += `<div><img class="file-thumb" src="/files/${encodeURIComponent(file.storedFileName)}" alt="${escapeHtml(file.originalName)}" /></div>`;
-        inner += `<div class="meta">${senderLabel} • ${time}</div>`;
+        inner += `<div class="meta">${escapeHtml(file.originalName)} • ${senderLabel} • ${time}</div>`;
       } else {
         // non-image: show link to download
         inner += `<div><a class="file-link" href="/files/${encodeURIComponent(file.storedFileName)}" target="_blank" rel="noopener noreferrer">${escapeHtml(file.originalName)}</a></div>`;
         inner += `<div class="meta">${senderLabel} • ${time}</div>`;
       }
     } else {
-      // text message
+      // === TEXT MESSAGE LOGIC ===
       const safeText = escapeHtml(String(textOrFile || ''));
       inner += `<div>${safeText}</div>`;
       inner += `<div class="meta">${senderLabel} • ${time}</div>`;
@@ -358,7 +394,7 @@
     const text = input.value.trim();
 
     if (!text || !currentChatUser)
-      return alert("Select a user first!");
+      return displayStatus("Please select a user first!", true);
 
     socket.emit("sendMessage", { to: currentChatUser, text });
     appendMessage("sent", text, currentUser, new Date());
@@ -368,7 +404,7 @@
 
   // Upload button opens file picker
   uploadBtn.addEventListener('click', () => {
-    if (!currentChatUser) return alert('Select a user first!');
+    if (!currentChatUser) return displayStatus("Please select a user first!", true);
     fileInput.click();
   });
 
@@ -376,13 +412,16 @@
   fileInput.addEventListener('change', async (ev) => {
     const file = ev.target.files[0];
     if (!file) return;
-    if (!currentChatUser) return alert('Select a user first!');
+    if (!currentChatUser) return displayStatus("Please select a user first!", true);
 
     const form = new FormData();
     form.append('file', file);
     form.append('to', currentChatUser);
 
     try {
+      // Show upload status
+      displayStatus(`Uploading file: ${file.name}...`, false);
+      
       // upload using same-origin credentials so session cookie is included
       const res = await fetch('/upload', {
         method: 'POST',
@@ -393,7 +432,7 @@
       const data = await res.json();
       if (!res.ok) {
         console.error('Upload failed', data);
-        alert('Upload failed');
+        displayStatus(`Upload failed: ${data.message || res.statusText}`, true);
         return;
       }
 
@@ -401,12 +440,13 @@
       const payload = data.payload || data;
       // show uploaded file in sender chat immediately
       appendMessage('sent', payload, currentUser, new Date());
+      displayStatus(`File sent successfully: ${file.name}`, false);
 
       // Clear file input
       fileInput.value = '';
     } catch (err) {
       console.error('Upload error', err);
-      alert('Upload failed');
+      displayStatus('Network or server error during upload.', true);
     }
   });
 
@@ -423,22 +463,19 @@
     }
   });
 
-  // Socket: file message broadcast
+  // Socket: file message broadcast (REAL-TIME FILE RECEIPT)
   socket.on("fileMessage", (msg) => {
     // msg: { sender, receiver, isFile:true, originalName, mimeType, storedFileName, timestamp }
-    // show if relevant
-    if (msg.sender === currentUser) return; // sender already showed via upload response
+    
+    // Check if the message is from us (already appended)
+    if (msg.sender === currentUser) return; 
 
-    if ( (msg.sender === currentChatUser && msg.receiver === currentUser) ||
-         (msg.receiver === currentChatUser && msg.sender === currentUser) ) {
-      // If conversation open and message belongs here, display
-      if (msg.sender === currentChatUser && msg.receiver === currentUser) {
-        appendMessage('received', msg, msg.sender, msg.timestamp);
-      } else if (msg.sender === currentUser && msg.receiver === currentChatUser) {
-        appendMessage('sent', msg, msg.sender, msg.timestamp);
-      }
+    // Check if the message is for the currently open chat window
+    if (msg.sender === currentChatUser && msg.receiver === currentUser) {
+      // Message is received in the active chat
+      appendMessage('received', msg, msg.sender, msg.timestamp);
     } else {
-      // increment unread for sender
+      // Message is received but chat is closed/different, increment unread count
       unreadCounts[msg.sender] = (unreadCounts[msg.sender] || 0) + 1;
       updateBadge(msg.sender);
     }
@@ -467,7 +504,6 @@
   // initialize
   fetchCurrentUser().then(loadUsers).catch((e) => {
     console.error('Init error', e);
-    // if not authenticated the backend redirect will handle it
   });
 
 </script>
